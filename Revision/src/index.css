@@ -1,0 +1,35 @@
+html, body {
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-responsive {
+    box-shadow: 4px 0 16px rgba(0,0,0,0.15);
+  }
+  .sidebar-close-btn {
+    display: block !important;
+  }
+  .menu-toggle-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+  .main-content {
+    padding-top: 64px !important;
+  }
+  .sidebar-overlay {
+    display: block !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .sidebar-responsive {
+    position: relative !important;
+    transform: none !important;
+  }
+}
+html, body {
+  margin: 0;
+  padding: 0;
+}
