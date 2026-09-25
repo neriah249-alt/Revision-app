@@ -5,25 +5,14 @@ import ThemeToggle from './ThemeToggle'
 import { supabase } from './lib/supabaseClient'
 import Logo from './Logo'
 import { useNavigate } from 'react-router-dom'
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
+import mammoth from 'mammoth'
 
-const MOCK_HISTORY = []
-
-const MOCK_SUMMARY = [
-  "Un système d'exploitation gère les ressources matérielles de l'ordinateur.",
-  "Un processus est un programme en cours d'exécution avec son propre espace mémoire.",
-  "L'ordonnanceur décide quel processus s'exécute sur le CPU à un instant donné.",
-  "La mémoire virtuelle simule plus de RAM que ce qui est physiquement disponible.",
-]
-
-const MOCK_QUESTIONS = [
-  { question: "Que gère principalement un système d'exploitation ?", options: ["Les ressources matérielles", "Uniquement l'affichage", "La connexion internet", "Les mises à jour logicielles"], correctIndex: 0, explanation: "Le système d'exploitation fait l'intermédiaire entre le matériel et les logiciels applicatifs." },
-  { question: "Qu'est-ce qu'un processus ?", options: ["Un fichier texte", "Un programme en cours d'exécution", "Un type de mémoire", "Un composant physique"], correctIndex: 1, explanation: "Un processus est une instance active d'un programme, avec son propre espace mémoire." },
-  { question: "Quel est le rôle de l'ordonnanceur (scheduler) ?", options: ["Stocker les fichiers", "Décider quel processus s'exécute sur le CPU", "Gérer l'affichage", "Chiffrer les données"], correctIndex: 1, explanation: "L'ordonnanceur choisit, à chaque instant, quel processus a accès au processeur." },
-]
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
 
 const SIDEBAR_W = 260
 
-function TimerRing({ pct, danger, seconds }) {
+function TimerRing({ pct, danger, seconds, T }) {
   const r = 26
   const c = 2 * Math.PI * r
   return (
@@ -67,37 +56,200 @@ export default function Dashboard() {
     })()
   }, [])
 
+    useEffect(() => {
+    loadHistory()
+  }, [])
+
+  async function loadHistory() {
+    setLoadingHistory(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setLoadingHistory(false); return }
+    const { data } = await supabase
+      .from('quiz_sessions')
+      .select('id, titre, score, total_questions')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setHistory(data || [])
+    setLoadingHistory(false)
+  }
+
   useEffect(() => {
     if (stage !== 'quiz') return
     setTimeLeft(secondsPerQ)
-  }, [current, stage, secondsPerQ])
-
-  useEffect(() => {
-    if (stage !== 'quiz') return
-    if (timeLeft <= 0) { handleAnswer(null); return }
-    timerRef.current = setTimeout(() => setTimeLeft((t) => t - 1), 1000)
-    return () => clearTimeout(timerRef.current)
+    const start = Date.now()
+    timerRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - start) / 1000)
+      const remaining = secondsPerQ - elapsed
+      if (remaining <= 0) {
+        clearInterval(timerRef.current)
+        setTimeLeft(0)
+        handleAnswer(null)
+      } else {
+        setTimeLeft(remaining)
+      }
+    }, 250)
+    return () => clearInterval(timerRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, stage])
-
+  }, [current, stage])
+  
   function startNewCourse() {
-    setStage('input'); setDocText(''); setCurrent(0); setAnswers([]); setAskAnswer('')
+    setStage('input'); setDocText(''); setCurrent(0); setAnswers([]); setAskAnswer(''); setSummary([]); setQuestions([]); setGenError(''); setAiTitre(''); setFileName('')
   }
 
-  function simulateGenerate() {
+  const [summary, setSummary] = useState([])
+  const [questions, setQuestions] = useState([])
+  const [genError, setGenError] = useState('')
+  const [fileName, setFileName] = useState('')
+  const [extracting, setExtracting] = useState(false)
+  const [history, setHistory] = useState([])
+  const [loadingHistory, setLoadingHistory] = useState(true)
+  const [aiTitre, setAiTitre] = useState('')
+
+  async function generateQuiz() {
+    setGenError('')
+    if (!docText.trim() || docText.trim().length < 20) {
+      setGenError('Colle un texte de cours un peu plus long avant de générer.')
+      return
+    }
     setStage('loading')
-    setTimeout(() => {
-      setAnswers(new Array(MOCK_QUESTIONS.length).fill(null))
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-quiz`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ docText, numQuestions, domaine, niveau }),
+        }
+      )
+      const data = await response.json()
+      if (data.error) {
+        setGenError(data.error)
+        setStage('input')
+        return
+      }
+      setSummary(data.summary || [])
+      setQuestions(data.questions || [])
+      setAiTitre(data.titre || '')
+      setAnswers(new Array((data.questions || []).length).fill(null))
       setCurrent(0)
       setStage('revision')
-    }, 900)
+    } catch (e) {
+      setGenError('Une erreur est survenue. Réessaie.')
+      setStage('input')
+    }
   }
 
-  function handleAnswer(idx) {
+    async function handleFileUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setFileName(file.name)
+    setGenError('')
+    setExtracting(true)
+    try {
+      let text = ''
+      if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        const arrayBuffer = await file.arrayBuffer()
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i)
+          const content = await page.getTextContent()
+          text += content.items.map((item) => item.str).join(' ') + '\n'
+        }
+      } else if (file.name.endsWith('.docx')) {
+        const arrayBuffer = await file.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer })
+        text = result.value
+      } else {
+        setGenError('Formats acceptés : PDF ou Word (.docx) uniquement.')
+        setExtracting(false)
+        return
+      }
+      if (!text.trim()) {
+        setGenError("Impossible d'extraire du texte de ce fichier — il contient peut-être des pages scannées (images).")
+      } else {
+        setDocText(text.trim())
+      }
+    } catch (err) {
+      setGenError("Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
+    }
+    setExtracting(false)
+  }
+
+    function handleAnswer(idx) {
     clearTimeout(timerRef.current)
-    setAnswers((prev) => { const copy = [...prev]; copy[current] = idx; return copy })
-    if (current + 1 < MOCK_QUESTIONS.length) setCurrent((c) => c + 1)
-    else setStage('result')
+    const updated = [...answers]
+    updated[current] = idx
+    setAnswers(updated)
+    if (current + 1 < questions.length) {
+      setCurrent((c) => c + 1)
+    } else {
+      setStage('result')
+      saveSession(updated)
+    }
+  }
+
+    async function saveSession(finalAnswers) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const finalScore = finalAnswers.filter((a, i) => a === questions[i]?.correctIndex).length
+      const titre = aiTitre || (docText.trim().slice(0, 60) + (docText.trim().length > 60 ? '...' : ''))
+
+      const { data: doc, error: docError } = await supabase.from('documents').insert({
+        user_id: user.id, titre, contenu_texte: docText,
+      }).select().single()
+      if (docError) { console.error('Erreur enregistrement document:', docError); return }
+
+      const { data: session, error: sessionError } = await supabase.from('quiz_sessions').insert({
+        user_id: user.id, document_id: doc.id, titre,
+        resume_revision: summary, score: finalScore, total_questions: questions.length,
+        secondes_par_question: secondsPerQ,
+      }).select().single()
+      if (sessionError) { console.error('Erreur enregistrement session:', sessionError); return }
+
+      const rows = questions.map((q, i) => ({
+        session_id: session.id, ordre: i, question: q.question, options: q.options,
+        correct_index: q.correctIndex, explication: q.explanation, reponse_etudiant: finalAnswers[i],
+      }))
+      const { error: questionsError } = await supabase.from('quiz_questions').insert(rows)
+      if (questionsError) { console.error('Erreur enregistrement questions:', questionsError) }
+
+      loadHistory()
+    } catch (e) {
+      console.error('Erreur sauvegarde session', e)
+    }
+  }
+
+    async function openSession(id) {
+    setStage('loading')
+    setSidebarOpen(false)
+    const { data: session } = await supabase.from('quiz_sessions').select('*, documents(contenu_texte)').eq('id', id).single()
+    const { data: qs } = await supabase.from('quiz_questions').select('*').eq('session_id', id).order('ordre')
+    setSummary(session?.resume_revision || [])
+    setQuestions((qs || []).map((q) => ({
+      question: q.question, options: q.options, correctIndex: q.correct_index, explanation: q.explication,
+    })))
+    setAnswers((qs || []).map((q) => q.reponse_etudiant))
+    setSecondsPerQ(session?.secondes_par_question || 30)
+    setDocText(session?.documents?.contenu_texte || '')
+    setStage('result')
+  }
+
+  async function deleteSession(id, e) {
+    e.stopPropagation()
+    if (!window.confirm('Supprimer cette session ?')) return
+    const { error } = await supabase.from('quiz_sessions').delete().eq('id', id)
+    if (error) {
+      console.error('Erreur suppression:', error)
+      alert('La suppression a échoué : ' + error.message)
+      return
+    }
+    setHistory((prev) => prev.filter((h) => h.id !== id))
   }
 
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
@@ -107,7 +259,7 @@ export default function Dashboard() {
         window.location.href = '/'
     }
 
-  const score = answers.filter((a, i) => a === MOCK_QUESTIONS[i]?.correctIndex).length
+  const score = answers.filter((a, i) => a === questions[i]?.correctIndex).length
   const letters = ['A', 'B', 'C', 'D']
 
   return (
@@ -138,14 +290,25 @@ export default function Dashboard() {
         </button>
         <div style={{ fontSize: 11.5, color: T.sub, fontWeight: 700, marginTop: 10, letterSpacing: 0.4 }}>HISTORIQUE</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
-          {MOCK_HISTORY.length === 0 ? (
+          {loadingHistory ? (
+            <div style={{ fontSize: 12.5, color: T.sub, padding: '8px 4px' }}>Chargement...</div>
+          ) : history.length === 0 ? (
             <div style={{ fontSize: 12.5, color: T.sub, padding: '8px 4px' }}>Aucune session pour l'instant. Dépose ton premier cours !</div>
           ) : (
-            MOCK_HISTORY.map((h) => (
-              <button key={h.id} style={{ textAlign: 'left', background: T.cardSoft, border: 'none', borderRadius: 10, padding: '10px 12px', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                <div style={{ fontSize: 13, color: T.text, marginBottom: 2 }}>{h.titre}</div>
-                <div style={{ fontSize: 11.5, color: T.sub }}>{h.score}/{h.total}</div>
-              </button>
+            history.map((h) => (
+              <div key={h.id} style={{ position: 'relative' }}>
+                <button onClick={() => openSession(h.id)} style={{ width: '100%', textAlign: 'left', background: T.cardSoft, border: 'none', borderRadius: 10, padding: '10px 32px 10px 12px', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                  <div style={{ fontSize: 13, color: T.text, marginBottom: 2 }}>{h.titre}</div>
+                  <div style={{ fontSize: 11.5, color: T.sub }}>{h.score}/{h.total_questions}</div>
+                </button>
+                <button
+                  onClick={(e) => deleteSession(h.id, e)}
+                  style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', color: T.sub, fontSize: 13, cursor: 'pointer', padding: 4 }}
+                  title="Supprimer"
+                >
+                  ✕
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -181,8 +344,17 @@ export default function Dashboard() {
                 </div>
               )}
               <h1 style={{ fontFamily: 'Fraunces, serif', fontSize: 24, margin: '0 0 16px', fontWeight: 600 }}>Dépose ton cours</h1>
-              <div style={{ fontSize: 13, color: T.sub, marginBottom: 8, fontWeight: 600 }}>Contenu du cours</div>
-              <textarea value={docText} onChange={(e) => setDocText(e.target.value)} placeholder="Colle ici le texte de ton cours..." rows={7} style={{ ...inputStyle, resize: 'vertical' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
+                <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
+                  {extracting ? 'Lecture en cours...' : '📎 Importer un PDF/Word'}
+                  <input type="file" accept=".pdf,.docx" onChange={handleFileUpload} style={{ display: 'none' }} disabled={extracting} />
+                </label>
+              </div>
+              {fileName && !extracting && (
+                <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {fileName}</div>
+              )}
+              <textarea value={docText} onChange={(e) => setDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={7} style={{ ...inputStyle, resize: 'vertical' }} />
               <div style={{ display: 'flex', gap: 12, marginTop: 18 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, color: T.sub, marginBottom: 6, fontWeight: 600 }}>Questions</div>
@@ -193,7 +365,8 @@ export default function Dashboard() {
                   <input type="number" min={10} max={90} step={5} value={secondsPerQ} onChange={(e) => setSecondsPerQ(Number(e.target.value))} style={inputStyle} />
                 </div>
               </div>
-              <button onClick={simulateGenerate} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Générer mon quiz</button>
+              <button onClick={generateQuiz} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Générer mon quiz</button>
+              {genError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{genError}</p>}
             </div>
           )}
 
@@ -207,7 +380,7 @@ export default function Dashboard() {
             <div style={{ background: T.card, borderRadius: 20, padding: 24, border: `1px solid ${T.border}`, boxShadow: T.shadow }}>
               <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 600, marginBottom: 14 }}>À retenir avant le quiz</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {MOCK_SUMMARY.map((point, idx) => (
+                  {summary.map((point, idx) => (
                   <div key={idx} style={{ display: 'flex', gap: 10, background: T.accentSoft, borderRadius: 12, padding: '12px 14px' }}>
                     <span style={{ color: T.accent, fontWeight: 700, fontSize: 13 }}>{idx + 1}</span>
                     <span style={{ fontSize: 14, lineHeight: 1.5 }}>{point}</span>
@@ -218,15 +391,15 @@ export default function Dashboard() {
             </div>
           )}
 
-          {stage === 'quiz' && MOCK_QUESTIONS[current] && (
+            {stage === 'quiz' && questions[current] && (
             <div style={{ background: T.card, borderRadius: 20, padding: 24, border: `1px solid ${T.border}`, boxShadow: T.shadow }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: T.sub }}>Question {current + 1} / {MOCK_QUESTIONS.length}</div>
-                <TimerRing pct={timeLeft / secondsPerQ} danger={timeLeft <= 5} seconds={timeLeft} />
+                <div style={{ fontSize: 12, color: T.sub }}>Question {current + 1} / {questions.length}</div>
+                  <TimerRing pct={timeLeft / secondsPerQ} danger={timeLeft <= 5} seconds={timeLeft} T={T} />
               </div>
-              <div style={{ fontSize: 17, marginBottom: 18, lineHeight: 1.4 }}>{MOCK_QUESTIONS[current].question}</div>
+              <div style={{ fontSize: 17, marginBottom: 18, lineHeight: 1.4 }}>{questions[current].question}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {MOCK_QUESTIONS[current].options.map((opt, idx) => (
+                {questions[current].options.map((opt, idx) => (
                   <button key={idx} onClick={() => handleAnswer(idx)} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', background: T.cardSoft, color: T.text, border: `1px solid ${T.border}`, borderRadius: 14, padding: '13px 14px', fontFamily: 'Inter, sans-serif', fontSize: 14.5, cursor: 'pointer' }}>
                     <span style={{ width: 24, height: 24, borderRadius: '50%', background: T.accentSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: T.accent, flexShrink: 0 }}>{letters[idx]}</span>
                     {opt}
@@ -243,15 +416,15 @@ export default function Dashboard() {
             <div style={{ background: T.card, borderRadius: 20, padding: 24, border: `1px solid ${T.border}`, boxShadow: T.shadow }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: T.sub, marginBottom: 8, fontWeight: 600 }}>Résultat</div>
-                <div style={{ fontFamily: 'Fraunces, serif', fontSize: 44, fontWeight: 600, color: score / MOCK_QUESTIONS.length >= 0.5 ? '#1E9E5A' : '#E0483C' }}>
-                  {score} / {MOCK_QUESTIONS.length}
+                  <div style={{ fontFamily: 'Fraunces, serif', fontSize: 44, fontWeight: 600, color: score / questions.length >= 0.5 ? '#1E9E5A' : '#E0483C' }}>
+                  {score} / {questions.length}
                 </div>
               </div>
-              {MOCK_QUESTIONS.some((q, i) => answers[i] !== q.correctIndex) && (
+              {questions.some((q, i) => answers[i] !== q.correctIndex) && (
                 <div style={{ marginTop: 24 }}>
                   <div style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, marginBottom: 12 }}>À revoir</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {MOCK_QUESTIONS.map((q, i) => answers[i] !== q.correctIndex ? (
+                    {questions.map((q, i) => answers[i] !== q.correctIndex ? (
                       <div key={i} style={{ background: T.cardSoft, borderRadius: 14, padding: '14px 16px', borderLeft: '3px solid #E0483C' }}>
                         <div style={{ fontSize: 14, marginBottom: 6 }}>{q.question}</div>
                         <div style={{ fontSize: 12.5, color: T.sub }}>bonne réponse : <strong style={{ color: T.text }}>{q.options[q.correctIndex]}</strong></div>

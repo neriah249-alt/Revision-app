@@ -9,8 +9,7 @@ import Dashboard from './Dashboard'
 import CompleteProfile from './CompleteProfile'
 
 function HomeWrapper() {
-  const navigate = useNavigate()
-  return <Home onGetStarted={() => navigate('/signup')} />
+  return <Home />
 }
 
 export default function App() {
