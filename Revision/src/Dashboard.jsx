@@ -6,9 +6,10 @@ import { supabase } from './lib/supabaseClient'
 import Logo from './Logo'
 import { useNavigate } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
+import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import mammoth from 'mammoth'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
 
 const SIDEBAR_W = 240
 
@@ -50,6 +51,31 @@ function ProgressRing({ pct, T, size = 120 }) {
   )
 }
 
+function formatAIText(text) {
+  if (!text) return null
+  const segments = text.split(/```/g)
+  return segments.map((seg, i) => {
+    if (i % 2 === 1) {
+      const cleaned = seg.replace(/^[a-zA-Z]*\n/, '')
+      return (
+        <pre key={i} style={{ background: 'rgba(0,0,0,0.3)', color: 'inherit', padding: '10px 12px', borderRadius: 10, overflowX: 'auto', fontSize: 12.5, margin: '8px 0', whiteSpace: 'pre-wrap' }}>
+          <code>{cleaned}</code>
+        </pre>
+      )
+    }
+    const parts = seg.split(/(\*\*[^*]+\*\*)/g)
+    return (
+      <span key={i} style={{ whiteSpace: 'pre-wrap' }}>
+        {parts.map((p, j) =>
+          p.startsWith('**') && p.endsWith('**')
+            ? <strong key={j}>{p.slice(2, -2)}</strong>
+            : <span key={j}>{p}</span>
+        )}
+      </span>
+    )
+  })
+}
+
 export default function Dashboard() {
   const { T } = useTheme()
   const { inputStyle, buttonStyle } = getStyles(T)
@@ -78,11 +104,13 @@ export default function Dashboard() {
   const [genError, setGenError] = useState('')
   const [fileName, setFileName] = useState('')
   const [extracting, setExtracting] = useState(false)
+  const [docImages, setDocImages] = useState([])
   const [aiTitre, setAiTitre] = useState('')
   const [ficheStage, setFicheStage] = useState('input')
   const [ficheDocText, setFicheDocText] = useState('')
   const [ficheFileName, setFicheFileName] = useState('')
   const [ficheExtracting, setFicheExtracting] = useState(false)
+  const [ficheDocImages, setFicheDocImages] = useState([])
   const [ficheData, setFicheData] = useState(null)
   const [ficheError, setFicheError] = useState('')
   const [ficheHistory, setFicheHistory] = useState([])
@@ -92,6 +120,7 @@ export default function Dashboard() {
   const [comprendreDocText, setComprendreDocText] = useState('')
   const [comprendreFileName, setComprendreFileName] = useState('')
   const [comprendreExtracting, setComprendreExtracting] = useState(false)
+  const [comprendreDocImages, setComprendreDocImages] = useState([])
   const [comprendreQuestion, setComprendreQuestion] = useState('')
   const [comprendreData, setComprendreData] = useState(null)
   const [comprendreError, setComprendreError] = useState('')
@@ -102,6 +131,7 @@ export default function Dashboard() {
   const [tuteurDocText, setTuteurDocText] = useState('')
   const [tuteurFileName, setTuteurFileName] = useState('')
   const [tuteurExtracting, setTuteurExtracting] = useState(false)
+  const [tuteurDocImages, setTuteurDocImages] = useState([])
   const [tuteurMessages, setTuteurMessages] = useState([])
   const [tuteurInput, setTuteurInput] = useState('')
   const [tuteurSending, setTuteurSending] = useState(false)
@@ -245,7 +275,7 @@ export default function Dashboard() {
   function startNewCourse() {
     setStage('input')
     setDocText(''); setCurrent(0); setAnswers([]); setAskAnswer('')
-    setSummary([]); setQuestions([]); setGenError(''); setAiTitre(''); setFileName('')
+    setSummary([]); setQuestions([]); setGenError(''); setAiTitre(''); setFileName(''); setDocImages([])
   }
 
   function goToQuizView() {
@@ -257,14 +287,14 @@ export default function Dashboard() {
   function goToFichesView() {
     setView('fiches')
     setFicheStage('input')
-    setFicheDocText(''); setFicheFileName(''); setFicheData(null); setFicheError('')
+    setFicheDocText(''); setFicheFileName(''); setFicheData(null); setFicheError(''); setFicheDocImages([])
     setSidebarOpen(false)
   }
 
-    function goToComprendreView() {
+  function goToComprendreView() {
     setView('comprendre')
     setComprendreStage('input')
-    setComprendreDocText(''); setComprendreFileName(''); setComprendreQuestion(''); setComprendreData(null); setComprendreError('')
+    setComprendreDocText(''); setComprendreFileName(''); setComprendreQuestion(''); setComprendreData(null); setComprendreError(''); setComprendreDocImages([])
     setSidebarOpen(false)
   }
 
@@ -275,11 +305,13 @@ export default function Dashboard() {
     setComprendreError('')
     setComprendreExtracting(true)
     try {
-      const text = await extractTextFromFile(file)
-      if (!text.trim()) {
-        setComprendreError("Impossible d'extraire du texte de ce fichier — il contient peut-être des pages scannées (images).")
+      const result = await extractFromFile(file)
+      if (result.mode === 'text') {
+        setComprendreDocText(result.text)
+        setComprendreDocImages([])
       } else {
-        setComprendreDocText(text.trim())
+        setComprendreDocImages(result.images)
+        setComprendreDocText('')
       }
     } catch (err) {
       setComprendreError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
@@ -289,8 +321,8 @@ export default function Dashboard() {
 
   async function askComprendre() {
     setComprendreError('')
-    if (!comprendreDocText.trim() || comprendreDocText.trim().length < 20) {
-      setComprendreError('Colle un texte de cours un peu plus long avant de poser ta question.')
+    if ((!comprendreDocText.trim() || comprendreDocText.trim().length < 20) && comprendreDocImages.length === 0) {
+      setComprendreError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de poser ta question.')
       return
     }
     if (!comprendreQuestion.trim() || comprendreQuestion.trim().length < 3) {
@@ -305,7 +337,7 @@ export default function Dashboard() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ docText: comprendreDocText, question: comprendreQuestion, domaine, niveau }),
+          body: JSON.stringify({ docText: comprendreDocText, images: comprendreDocImages, question: comprendreQuestion, domaine, niveau }),
         }
       )
       const data = await response.json()
@@ -358,11 +390,11 @@ export default function Dashboard() {
     setComprendreHistory((prev) => prev.filter((c) => c.id !== id))
   }
 
-    function goToTuteurView() {
+  function goToTuteurView() {
     setView('tuteur')
     setTuteurStage('input')
     setTuteurDocText(''); setTuteurFileName(''); setTuteurMessages([]); setTuteurInput('')
-    setTuteurError(''); setTuteurConversationId(null)
+    setTuteurError(''); setTuteurConversationId(null); setTuteurDocImages([])
     setSidebarOpen(false)
   }
 
@@ -373,11 +405,13 @@ export default function Dashboard() {
     setTuteurError('')
     setTuteurExtracting(true)
     try {
-      const text = await extractTextFromFile(file)
-      if (!text.trim()) {
-        setTuteurError("Impossible d'extraire du texte de ce fichier — il contient peut-être des pages scannées (images).")
+      const result = await extractFromFile(file)
+      if (result.mode === 'text') {
+        setTuteurDocText(result.text)
+        setTuteurDocImages([])
       } else {
-        setTuteurDocText(text.trim())
+        setTuteurDocImages(result.images)
+        setTuteurDocText('')
       }
     } catch (err) {
       setTuteurError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
@@ -387,8 +421,8 @@ export default function Dashboard() {
 
   async function startTuteurConversation() {
     setTuteurError('')
-    if (!tuteurDocText.trim() || tuteurDocText.trim().length < 20) {
-      setTuteurError('Colle un texte de cours un peu plus long avant de commencer.')
+    if ((!tuteurDocText.trim() || tuteurDocText.trim().length < 20) && tuteurDocImages.length === 0) {
+      setTuteurError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de commencer.')
       return
     }
     setTuteurStage('chat')
@@ -413,7 +447,7 @@ export default function Dashboard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({
-            docText: tuteurDocText, message: messageText, history: tuteurMessages,
+            docText: tuteurDocText, images: tuteurDocImages, message: messageText, history: tuteurMessages,
             domaine, niveau, wantTitle: isFirstMessage,
           }),
         }
@@ -501,8 +535,8 @@ export default function Dashboard() {
 
     async function generateFiche() {
     setFicheError('')
-    if (!ficheDocText.trim() || ficheDocText.trim().length < 20) {
-      setFicheError('Colle un texte de cours un peu plus long avant de générer.')
+    if ((!ficheDocText.trim() || ficheDocText.trim().length < 20) && ficheDocImages.length === 0) {
+      setFicheError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de générer.')
       return
     }
     setFicheStage('loading')
@@ -513,7 +547,7 @@ export default function Dashboard() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ docText: ficheDocText, domaine, niveau }),
+          body: JSON.stringify({ docText: ficheDocText, images: ficheDocImages, domaine, niveau }),
         }
       )
       const data = await response.json()
@@ -587,8 +621,8 @@ export default function Dashboard() {
 
   async function generateQuiz() {
     setGenError('')
-    if (!docText.trim() || docText.trim().length < 20) {
-      setGenError('Colle un texte de cours un peu plus long avant de générer.')
+    if ((!docText.trim() || docText.trim().length < 20) && docImages.length === 0) {
+      setGenError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de générer.')
       return
     }
     setStage('loading')
@@ -599,7 +633,7 @@ export default function Dashboard() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ docText, numQuestions, domaine, niveau }),
+          body: JSON.stringify({ docText, images: docImages, numQuestions, domaine, niveau }),
         }
       )
       const data = await response.json()
@@ -616,7 +650,27 @@ export default function Dashboard() {
     }
   }
 
-  async function extractTextFromFile(file) {
+  async function extractFromFile(file) {
+    if (file.type.startsWith('image/')) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const img = new Image()
+          img.onload = () => {
+            const canvas = document.createElement('canvas')
+            canvas.width = img.width
+            canvas.height = img.height
+            canvas.getContext('2d').drawImage(img, 0, 0)
+            resolve(canvas.toDataURL('image/jpeg', 0.8))
+          }
+          img.onerror = reject
+          img.src = reader.result
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      return { mode: 'images', images: [dataUrl.split(',')[1]] }
+    }
     if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       const arrayBuffer = await file.arrayBuffer()
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
@@ -626,11 +680,28 @@ export default function Dashboard() {
         const content = await page.getTextContent()
         text += content.items.map((item) => item.str).join(' ') + '\n'
       }
-      return text
+      if (text.trim().length >= 30) {
+        return { mode: 'text', text: text.trim() }
+      }
+      // PDF scanné/image : on transforme les pages en images pour que l'IA les lise directement
+      const maxPages = Math.min(pdf.numPages, 8)
+      const images = []
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i)
+        const viewport = page.getViewport({ scale: 1.5 })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const ctx = canvas.getContext('2d')
+        await page.render({ canvasContext: ctx, viewport }).promise
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.75)
+        images.push(dataUrl.split(',')[1])
+      }
+      return { mode: 'images', images }
     } else if (file.name.endsWith('.docx')) {
       const arrayBuffer = await file.arrayBuffer()
       const result = await mammoth.extractRawText({ arrayBuffer })
-      return result.value
+      return { mode: 'text', text: result.value }
     }
     throw new Error('FORMAT_NON_SUPPORTE')
   }
@@ -654,18 +725,20 @@ export default function Dashboard() {
     return created.id
   }
 
-  async function handleFileUpload(e) {
+    async function handleFileUpload(e) {
     const file = e.target.files[0]
     if (!file) return
     setFileName(file.name)
     setGenError('')
     setExtracting(true)
     try {
-      const text = await extractTextFromFile(file)
-      if (!text.trim()) {
-        setGenError("Impossible d'extraire du texte de ce fichier — il contient peut-être des pages scannées (images).")
+      const result = await extractFromFile(file)
+      if (result.mode === 'text') {
+        setDocText(result.text)
+        setDocImages([])
       } else {
-        setDocText(text.trim())
+        setDocImages(result.images)
+        setDocText('')
       }
     } catch (err) {
       setGenError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
@@ -673,18 +746,20 @@ export default function Dashboard() {
     setExtracting(false)
   }
 
-  async function handleFicheFileUpload(e) {
+    async function handleFicheFileUpload(e) {
     const file = e.target.files[0]
     if (!file) return
     setFicheFileName(file.name)
     setFicheError('')
     setFicheExtracting(true)
     try {
-      const text = await extractTextFromFile(file)
-      if (!text.trim()) {
-        setFicheError("Impossible d'extraire du texte de ce fichier — il contient peut-être des pages scannées (images).")
+      const result = await extractFromFile(file)
+      if (result.mode === 'text') {
+        setFicheDocText(result.text)
+        setFicheDocImages([])
       } else {
-        setFicheDocText(text.trim())
+        setFicheDocImages(result.images)
+        setFicheDocText('')
       }
     } catch (err) {
       setFicheError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
@@ -895,7 +970,7 @@ export default function Dashboard() {
                   </div>
                   <label style={{ display: 'inline-block', background: T.accent, color: '#fff', borderRadius: 12, padding: '11px 18px', fontWeight: 700, fontSize: 13.5, cursor: 'pointer' }}>
                     + Importer un PDF / Word
-                    <input type="file" accept=".pdf,.docx" onChange={handleHeroUpload} style={{ display: 'none' }} />
+                    <input type="file" accept=".pdf,.docx,image/*" onChange={handleHeroUpload} style={{ display: 'none' }} />
                   </label>
                 </div>
                 <div style={{ fontSize: 46 }}>📘</div>
@@ -1042,7 +1117,7 @@ export default function Dashboard() {
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
                     {ficheExtracting ? 'Lecture en cours...' : '📎 Importer un PDF/Word'}
-                    <input type="file" accept=".pdf,.docx" onChange={handleFicheFileUpload} style={{ display: 'none' }} disabled={ficheExtracting} />
+                    <input type="file" accept=".pdf,.docx,image/*" onChange={handleFicheFileUpload} style={{ display: 'none' }} disabled={ficheExtracting} />
                   </label>
                 </div>
                 {ficheFileName && !ficheExtracting && <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {ficheFileName}</div>}
@@ -1099,10 +1174,14 @@ export default function Dashboard() {
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
                     {comprendreExtracting ? 'Lecture en cours...' : '📎 Importer un PDF/Word'}
-                    <input type="file" accept=".pdf,.docx" onChange={handleComprendreFileUpload} style={{ display: 'none' }} disabled={comprendreExtracting} />
+                    <input type="file" accept=".pdf,.docx,image/*" onChange={handleComprendreFileUpload} style={{ display: 'none' }} disabled={comprendreExtracting} />
                   </label>
                 </div>
-                {comprendreFileName && !comprendreExtracting && <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {comprendreFileName}</div>}
+                {comprendreFileName && !comprendreExtracting && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>
+                    Fichier : {comprendreFileName} {comprendreDocImages.length > 0 && '(lu comme scan)'}
+                  </div>
+                )}
                 <textarea value={comprendreDocText} onChange={(e) => setComprendreDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={6} style={{ ...inputStyle, resize: 'vertical' }} />
                 <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, margin: '16px 0 8px' }}>Ta question</div>
                 <input type="text" value={comprendreQuestion} onChange={(e) => setComprendreQuestion(e.target.value)} placeholder="Ex : c'est quoi la différence entre..." style={inputStyle} />
@@ -1123,7 +1202,7 @@ export default function Dashboard() {
                 <div style={{ fontFamily: 'Fraunces, serif', fontSize: 17, fontWeight: 600, marginBottom: 18 }}>{comprendreQuestion}</div>
                 <div style={{ fontSize: 12.5, color: T.sub, marginBottom: 6 }}>Réponse</div>
                 <div style={{ background: T.accentSoft, borderRadius: 12, padding: '14px 16px', fontSize: 14, lineHeight: 1.6 }}>
-                  {comprendreData.reponse}
+                  {formatAIText(comprendreData.reponse)}
                 </div>
                 <button onClick={goToComprendreView} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Poser une nouvelle question</button>
               </div>
@@ -1149,10 +1228,14 @@ export default function Dashboard() {
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Sur quel cours veux-tu discuter ?</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
                     {tuteurExtracting ? 'Lecture en cours...' : '📎 Importer un PDF/Word'}
-                    <input type="file" accept=".pdf,.docx" onChange={handleTuteurFileUpload} style={{ display: 'none' }} disabled={tuteurExtracting} />
+                    <input type="file" accept=".pdf,.docx,image/*" onChange={handleTuteurFileUpload} style={{ display: 'none' }} disabled={tuteurExtracting} />
                   </label>
                 </div>
-                {tuteurFileName && !tuteurExtracting && <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {tuteurFileName}</div>}
+                {tuteurFileName && !tuteurExtracting && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>
+                    Fichier : {tuteurFileName} {tuteurDocImages.length > 0 && '(lu comme scan)'}
+                  </div>
+                )}
                 <textarea value={tuteurDocText} onChange={(e) => setTuteurDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={8} style={{ ...inputStyle, resize: 'vertical' }} />
                 <button onClick={startTuteurConversation} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Commencer la discussion</button>
                 {tuteurError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{tuteurError}</p>}
@@ -1174,7 +1257,7 @@ export default function Dashboard() {
                         background: m.role === 'user' ? T.accent : T.cardSoft,
                         color: m.role === 'user' ? '#fff' : T.text,
                       }}>
-                        {m.contenu}
+                        {formatAIText(m.contenu)}
                       </div>
                     </div>
                   ))}
@@ -1377,10 +1460,14 @@ export default function Dashboard() {
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
                     {extracting ? 'Lecture en cours...' : '📎 Importer un PDF/Word'}
-                    <input type="file" accept=".pdf,.docx" onChange={handleFileUpload} style={{ display: 'none' }} disabled={extracting} />
+                    <input type="file" accept=".pdf,.docx,image/*" onChange={handleFileUpload} style={{ display: 'none' }} disabled={extracting} />
                   </label>
                 </div>
-                {fileName && !extracting && <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {fileName}</div>}
+                  {fileName && !extracting && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>
+                    Fichier : {fileName} {docImages.length > 0 && '(lu comme scan)'}
+                  </div>
+                )}
                 <textarea value={docText} onChange={(e) => setDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={7} style={{ ...inputStyle, resize: 'vertical' }} />
                 <div style={{ display: 'flex', gap: 12, marginTop: 18 }}>
                   <div style={{ flex: 1 }}>
