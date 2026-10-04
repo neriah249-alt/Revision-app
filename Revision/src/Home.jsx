@@ -36,7 +36,7 @@ export default function Home({ onGetStarted }) {
           <Logo size={26} />
           Révision
         </Link>
-        <div style={{ display: 'flex', gap: 24, fontSize: 14, fontWeight: 600 }}>
+        <div className="home-nav-links" style={{ display: 'flex', gap: 24, fontSize: 14, fontWeight: 600 }}>
           <a href="#accueil" style={{ color: T.accent, textDecoration: 'none' }}>Accueil</a>
           <a href="#comment-ca-marche" style={{ color: T.sub, textDecoration: 'none' }}>Comment ça marche</a>
           <a href="#faq" style={{ color: T.sub, textDecoration: 'none' }}>FAQ</a>

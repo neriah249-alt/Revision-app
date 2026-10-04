@@ -13,6 +13,22 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
 
 const SIDEBAR_W = 240
 
+const MOTIVATIONAL_QUOTES = [
+  "Un grand rêve commence toujours par une petite action. 💙",
+  "Chaque quiz terminé est une victoire sur hier. ✨",
+  "La régularité bat le talent quand le talent ne révise pas. 🔥",
+  "Tu n'as pas besoin d'être parfait·e, juste constant·e. 🌱",
+  "Réviser 15 minutes aujourd'hui vaut mieux que 3h la veille de l'examen. ⏳",
+  "Chaque erreur corrigée est une leçon apprise pour de bon. 💡",
+  "Ton futur toi te remerciera pour l'effort d'aujourd'hui. 🎯",
+  "Petit à petit, l'oiseau fait son nid — et toi, ta réussite. 🪶",
+]
+
+function getDailyQuote() {
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000)
+  return MOTIVATIONAL_QUOTES[dayOfYear % MOTIVATIONAL_QUOTES.length]
+}
+
 const NAV_ITEMS = [
   { key: 'accueil', label: 'Accueil', icon: '🏠', premium: false },
   { key: 'mes-cours', label: 'Mes cours', icon: '📚', premium: false },
@@ -142,10 +158,12 @@ export default function Dashboard() {
 
   const [progData, setProgData] = useState(null)
   const [loadingProg, setLoadingProg] = useState(false)
-
   const [mesCours, setMesCours] = useState([])
   const [loadingMesCours, setLoadingMesCours] = useState(true)
 
+  const [usage, setUsage] = useState({ quizFiche: 0, comprendreTuteur: 0, estPremium: false })
+  const LIMIT_QUIZ_FICHE = 12
+  const LIMIT_COMPRENDRE_TUTEUR = 15
   const [history, setHistory] = useState([])
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
@@ -162,7 +180,39 @@ export default function Dashboard() {
     })()
   }, [])
 
-  useEffect(() => { loadHistory(); loadFicheHistory(); loadComprendreHistory(); loadTuteurHistory(); loadMesCours() }, [])
+  useEffect(() => { loadHistory(); loadFicheHistory(); loadComprendreHistory(); loadTuteurHistory(); loadMesCours(); loadUsage() }, [])
+
+  function currentMonthKey() {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+
+  async function loadUsage() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase.from('profiles').select('usage_quiz_fiche, usage_comprendre_tuteur, usage_month, est_premium').eq('id', user.id).single()
+    if (!data) return
+    const thisMonth = currentMonthKey()
+    if (data.usage_month !== thisMonth) {
+      await supabase.from('profiles').update({ usage_quiz_fiche: 0, usage_comprendre_tuteur: 0, usage_month: thisMonth }).eq('id', user.id)
+      setUsage({ quizFiche: 0, comprendreTuteur: 0, estPremium: data.est_premium })
+    } else {
+      setUsage({ quizFiche: data.usage_quiz_fiche, comprendreTuteur: data.usage_comprendre_tuteur, estPremium: data.est_premium })
+    }
+  }
+
+  async function checkAndUseQuota(type) {
+    if (usage.estPremium) return { allowed: true }
+    const field = type === 'quiz_fiche' ? 'quizFiche' : 'comprendreTuteur'
+    const limit = type === 'quiz_fiche' ? LIMIT_QUIZ_FICHE : LIMIT_COMPRENDRE_TUTEUR
+    if (usage[field] >= limit) return { allowed: false }
+    const { data: { user } } = await supabase.auth.getUser()
+    const dbField = type === 'quiz_fiche' ? 'usage_quiz_fiche' : 'usage_comprendre_tuteur'
+    const newValue = usage[field] + 1
+    await supabase.from('profiles').update({ [dbField]: newValue }).eq('id', user.id)
+    setUsage((prev) => ({ ...prev, [field]: newValue }))
+    return { allowed: true }
+  }
 
   async function loadMesCours() {
     setLoadingMesCours(true)
@@ -431,6 +481,13 @@ export default function Dashboard() {
   async function sendTuteurMessage() {
     if (!tuteurInput.trim() || tuteurSending) return
     const messageText = tuteurInput.trim()
+    const isFirstMessage = tuteurMessages.length === 0
+
+    if (isFirstMessage) {
+      const quota = await checkAndUseQuota('comprendre_tuteur')
+      if (!quota.allowed) { setTuteurError('QUOTA_DEPASSE'); return }
+    }
+
     setTuteurInput('')
     setTuteurError('')
 
@@ -539,6 +596,8 @@ export default function Dashboard() {
       setFicheError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de générer.')
       return
     }
+    const quota = await checkAndUseQuota('quiz_fiche')
+    if (!quota.allowed) { setFicheError('QUOTA_DEPASSE'); return }
     setFicheStage('loading')
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -608,6 +667,15 @@ export default function Dashboard() {
     setTimeout(() => setPremiumMsg(false), 2500)
   }
 
+  function quotaMessage(type) {
+    const limit = type === 'quiz_fiche' ? LIMIT_QUIZ_FICHE : LIMIT_COMPRENDRE_TUTEUR
+    const label = type === 'quiz_fiche' ? 'quiz et fiches' : "questions et conversations avec le tuteur"
+    const now = new Date()
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    const dateStr = nextMonth.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
+    return `Tu as atteint ta limite gratuite de ${limit} ${label} ce mois-ci. Ça se renouvelle le ${dateStr}, ou passe en Premium pour continuer sans attendre.`
+  }
+
     function handleNavClick(item) {
     if (item.premium) { showPremiumTeaser(); return }
     if (item.key === 'accueil') goHome()
@@ -625,6 +693,8 @@ export default function Dashboard() {
       setGenError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de générer.')
       return
     }
+    const quota = await checkAndUseQuota('quiz_fiche')
+    if (!quota.allowed) { setGenError('QUOTA_DEPASSE'); return }
     setStage('loading')
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -960,6 +1030,18 @@ export default function Dashboard() {
         {view === 'accueil' && (
           <div style={{ maxWidth: 1000, margin: '0 auto', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 560px' }}>
+              {!usage.estPremium && (
+                <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 160px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '12px 16px' }}>
+                    <div style={{ fontSize: 11.5, color: T.sub, marginBottom: 4 }}>Quiz & fiches</div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{Math.max(LIMIT_QUIZ_FICHE - usage.quizFiche, 0)} / {LIMIT_QUIZ_FICHE} restants</div>
+                  </div>
+                  <div style={{ flex: '1 1 160px', background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '12px 16px' }}>
+                    <div style={{ fontSize: 11.5, color: T.sub, marginBottom: 4 }}>Comprendre & Tuteur</div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{Math.max(LIMIT_COMPRENDRE_TUTEUR - usage.comprendreTuteur, 0)} / {LIMIT_COMPRENDRE_TUTEUR} restants</div>
+                  </div>
+                </div>
+              )}
               <div style={{ ...cardStyle, background: T.accentSoft, border: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                 <div style={{ maxWidth: 340 }}>
                   <div style={{ fontFamily: 'Fraunces, serif', fontSize: 19, fontWeight: 600, marginBottom: 6 }}>
@@ -1021,10 +1103,9 @@ export default function Dashboard() {
             <div style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div style={{ ...cardStyle, background: T.accentSoft, border: 'none' }}>
                 <div style={{ fontSize: 13.5, fontStyle: 'italic', lineHeight: 1.5 }}>
-                  Un grand rêve commence toujours par une petite action. 💙
+                  {getDailyQuote()}
                 </div>
               </div>
-
               <div style={{ ...cardStyle, textAlign: 'center', cursor: 'pointer' }} onClick={goToProgressionView}>
                 <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 10 }}>📈 Ma progression</div>
                 {history.length === 0 ? (
@@ -1113,6 +1194,9 @@ export default function Dashboard() {
                 </div>
               )}
               <div style={cardStyle}>
+                {!usage.estPremium && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>{Math.max(LIMIT_QUIZ_FICHE - usage.quizFiche, 0)} quiz/fiches restants ce mois-ci</div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
@@ -1123,7 +1207,12 @@ export default function Dashboard() {
                 {ficheFileName && !ficheExtracting && <div style={{ fontSize: 12, color: T.sub, marginBottom: 6 }}>Fichier : {ficheFileName}</div>}
                 <textarea value={ficheDocText} onChange={(e) => setFicheDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={8} style={{ ...inputStyle, resize: 'vertical' }} />
                   <button onClick={generateFiche} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Générer ma fiche</button>
-                {ficheError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{ficheError}</p>}
+                {ficheError === 'QUOTA_DEPASSE' ? (
+                  <div style={{ background: T.accentSoft, borderRadius: 12, padding: '12px 14px', marginTop: 10 }}>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{quotaMessage('quiz_fiche')}</div>
+                    <button onClick={showPremiumTeaser} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Passer en Premium</button>
+                  </div>
+                ) : ficheError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{ficheError}</p>}
               </div>
               </>
             )}
@@ -1162,6 +1251,9 @@ export default function Dashboard() {
 
             {comprendreStage === 'input' && (
               <div style={cardStyle}>
+                {!usage.estPremium && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>{Math.max(LIMIT_COMPRENDRE_TUTEUR - usage.comprendreTuteur, 0)} questions/conversations restantes ce mois-ci</div>
+                )}
                 {comprendreHistory.length > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, fontSize: 13 }}>
                     <span style={{ color: T.sub }}>{comprendreHistory.length} question{comprendreHistory.length > 1 ? 's' : ''} déjà posée{comprendreHistory.length > 1 ? 's' : ''}</span>
@@ -1169,6 +1261,9 @@ export default function Dashboard() {
                       Voir l'historique →
                     </button>
                   </div>
+                )}
+                {!usage.estPremium && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>{Math.max(LIMIT_COMPRENDRE_TUTEUR - usage.comprendreTuteur, 0)} questions/conversations restantes ce mois-ci</div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
@@ -1186,7 +1281,12 @@ export default function Dashboard() {
                 <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, margin: '16px 0 8px' }}>Ta question</div>
                 <input type="text" value={comprendreQuestion} onChange={(e) => setComprendreQuestion(e.target.value)} placeholder="Ex : c'est quoi la différence entre..." style={inputStyle} />
                 <button onClick={askComprendre} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Obtenir une explication</button>
-                {comprendreError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{comprendreError}</p>}
+                {comprendreError === 'QUOTA_DEPASSE' ? (
+                  <div style={{ background: T.accentSoft, borderRadius: 12, padding: '12px 14px', marginTop: 10 }}>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{quotaMessage('comprendre_tuteur')}</div>
+                    <button onClick={showPremiumTeaser} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Passer en Premium</button>
+                  </div>
+                ) : comprendreError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{comprendreError}</p>}
               </div>
             )}
 
@@ -1223,6 +1323,9 @@ export default function Dashboard() {
                       Voir l'historique →
                     </button>
                   </div>
+                )}
+                {!usage.estPremium && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>{Math.max(LIMIT_COMPRENDRE_TUTEUR - usage.comprendreTuteur, 0)} questions/conversations restantes ce mois-ci</div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Sur quel cours veux-tu discuter ?</div>
@@ -1265,7 +1368,12 @@ export default function Dashboard() {
                     <div style={{ fontSize: 12.5, color: T.sub, fontStyle: 'italic' }}>Le tuteur réfléchit...</div>
                   )}
                 </div>
-                {tuteurError && <p style={{ color: '#E0483C', fontSize: 12.5, marginBottom: 8 }}>{tuteurError}</p>}
+                {tuteurError === 'QUOTA_DEPASSE' ? (
+                  <div style={{ background: T.accentSoft, borderRadius: 12, padding: '12px 14px', marginBottom: 8 }}>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.5, marginBottom: 8 }}>{quotaMessage('comprendre_tuteur')}</div>
+                    <button onClick={showPremiumTeaser} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Passer en Premium</button>
+                  </div>
+                ) : tuteurError && <p style={{ color: '#E0483C', fontSize: 12.5, marginBottom: 8 }}>{tuteurError}</p>}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     type="text" value={tuteurInput} onChange={(e) => setTuteurInput(e.target.value)}
@@ -1456,6 +1564,9 @@ export default function Dashboard() {
 
             {stage === 'input' && (
               <div style={cardStyle}>
+                {!usage.estPremium && (
+                  <div style={{ fontSize: 12, color: T.sub, marginBottom: 12 }}>{Math.max(LIMIT_QUIZ_FICHE - usage.quizFiche, 0)} quiz/fiches restants ce mois-ci</div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Contenu du cours</div>
                   <label style={{ fontSize: 12.5, color: T.accent, fontWeight: 700, cursor: 'pointer' }}>
@@ -1480,7 +1591,12 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <button onClick={generateQuiz} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Générer mon quiz</button>
-                {genError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{genError}</p>}
+                  {genError === 'QUOTA_DEPASSE' ? (
+                  <div style={{ background: T.accentSoft, borderRadius: 12, padding: '12px 14px', marginTop: 10 }}>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{quotaMessage('quiz_fiche')}</div>
+                    <button onClick={showPremiumTeaser} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Passer en Premium</button>
+                  </div>
+                ) : genError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{genError}</p>}
               </div>
             )}
 

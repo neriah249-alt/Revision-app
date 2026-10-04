@@ -33,3 +33,9 @@ html, body {
   margin: 0;
   padding: 0;
 }
+
+@media (max-width: 640px) {
+  .home-nav-links {
+    display: none !important;
+  }
+}
