@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import { ThemeProvider } from './ThemeContext'
+import { useState } from 'react'
+import SplashScreen from './SplashScreen'
 import Home from './Home'
 import SignUp from './SignUp'
 import Login from './Login'
@@ -13,8 +15,10 @@ function HomeWrapper() {
 }
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true)
   return (
     <ThemeProvider>
+    {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomeWrapper />} />

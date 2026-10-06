@@ -5,11 +5,15 @@ import ThemeToggle from './ThemeToggle'
 import Logo from './Logo'
 
 const FAQS = [
-  { q: "Comment ça marche exactement ?", a: "Tu déposes le texte de ton cours (ou tu importes un PDF/Word), l'IA te génère un résumé des points clés puis un quiz chronométré pour tester ce que tu as retenu. À la fin, tu vois exactement ce qu'il te reste à réviser." },
+  { q: "Comment ça marche exactement ?", a: "Tu déposes le texte de ton cours (ou tu importes un PDF/Word/photo), l'IA te génère un résumé des points clés puis un quiz chronométré pour tester ce que tu as retenu. À la fin, tu vois exactement ce qu'il te reste à réviser." },
+  { q: "Est-ce que ça marche avec des photos ou des PDF scannés ?", a: "Oui — si ton document est une photo ou un PDF scanné sans texte sélectionnable, l'IA lit directement le contenu comme une image, sans que tu aies besoin de retaper quoi que ce soit." },
   { q: "Est-ce que c'est réservé aux étudiants d'une école en particulier ?", a: "Non, la plateforme est ouverte à tout étudiant, peu importe ton domaine d'études ou ton niveau." },
-  { q: "Est-ce que c'est payant ?", a: "L'inscription et l'usage de base sont gratuits. On te préviendra clairement si des options supplémentaires payantes arrivent plus tard." },
-  { q: "Mes documents de cours sont-ils partagés avec d'autres étudiants ?", a: "Non, tes documents et tes quiz restent privés, liés à ton compte uniquement." },
-  { q: "Est-ce que je peux revoir mes anciens quiz ?", a: "Oui, un historique garde toutes tes sessions passées, consultable à tout moment depuis ton tableau de bord." },
+  { q: "Combien de quiz/fiches puis-je faire gratuitement ?", a: "La version gratuite inclut 12 quiz/fiches et 15 questions ou conversations avec le tuteur par mois, remis à zéro chaque mois. Premium débloque un usage illimité." },
+  { q: "Mes documents de cours sont-ils partagés avec d'autres étudiants ?", a: "Non, tes documents, quiz et conversations restent privés, liés à ton compte uniquement." },
+  { q: "Est-ce que je peux revoir mes anciens quiz ?", a: "Oui, un historique garde toutes tes sessions passées (quiz, fiches, questions, conversations), consultable à tout moment." },
+  { q: "Qu'est-ce que \"Mon tuteur IA\" ?", a: "Un chat qui connaît ton cours et répond à tes questions à la suite, comme une vraie conversation — tu peux lui poser plusieurs questions sans tout retaper." },
+  { q: "Et si ma question sort du cours ?", a: "L'IA te le signale clairement, puis répond quand même pour t'aider à comprendre — elle ne refuse jamais de répondre." },
+  { q: "Puis-je utiliser l'appli dans une autre langue que le français ?", a: "Oui, le contenu généré suit automatiquement la langue de ton cours (ex. un cours en anglais donne un quiz en anglais)." },
 ]
 
 function FaqItem({ q, a, T }) {

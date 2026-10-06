@@ -220,7 +220,7 @@ export default function Dashboard() {
     if (!user) { setLoadingMesCours(false); return }
     const { data } = await supabase
       .from('documents')
-      .select('id, titre, contenu_texte, created_at')
+      .select('id, titre, contenu_texte, images, created_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
     setMesCours(data || [])
@@ -241,10 +241,20 @@ export default function Dashboard() {
   }
 
   function useCourseFor(doc, destination) {
-    if (destination === 'quiz') { setView('quiz'); startNewCourse(); setDocText(doc.contenu_texte); setFileName(doc.titre) }
-    else if (destination === 'fiches') { setView('fiches'); setFicheStage('input'); setFicheDocText(doc.contenu_texte); setFicheFileName(doc.titre); setFicheData(null); setFicheError('') }
-    else if (destination === 'comprendre') { setView('comprendre'); setComprendreStage('input'); setComprendreDocText(doc.contenu_texte); setComprendreFileName(doc.titre); setComprendreData(null); setComprendreError('') }
-    else if (destination === 'tuteur') { setView('tuteur'); setTuteurStage('input'); setTuteurDocText(doc.contenu_texte); setTuteurFileName(doc.titre); setTuteurMessages([]); setTuteurConversationId(null) }
+    const hasImages = doc.images && doc.images.length > 0
+    if (destination === 'quiz') {
+      setView('quiz'); startNewCourse(); setFileName(doc.titre)
+      if (hasImages) setDocImages(doc.images); else setDocText(doc.contenu_texte)
+    } else if (destination === 'fiches') {
+      setView('fiches'); setFicheStage('input'); setFicheFileName(doc.titre); setFicheData(null); setFicheError('')
+      if (hasImages) setFicheDocImages(doc.images); else setFicheDocText(doc.contenu_texte)
+    } else if (destination === 'comprendre') {
+      setView('comprendre'); setComprendreStage('input'); setComprendreFileName(doc.titre); setComprendreData(null); setComprendreError('')
+      if (hasImages) setComprendreDocImages(doc.images); else setComprendreDocText(doc.contenu_texte)
+    } else if (destination === 'tuteur') {
+      setView('tuteur'); setTuteurStage('input'); setTuteurFileName(doc.titre); setTuteurMessages([]); setTuteurConversationId(null)
+      if (hasImages) setTuteurDocImages(doc.images); else setTuteurDocText(doc.contenu_texte)
+    }
   }
 
   async function loadTuteurHistory() {
@@ -405,7 +415,7 @@ export default function Dashboard() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      await getOrCreateDocument(comprendreDocText, data.titre || comprendreQuestion.slice(0, 60))
+      await getOrCreateDocument(comprendreDocText, data.titre || comprendreQuestion.slice(0, 60), comprendreDocImages)
       const { error } = await supabase.from('comprendre_entries').insert({
         user_id: user.id,
         titre: data.titre || comprendreQuestion.slice(0, 60),
@@ -522,7 +532,7 @@ export default function Dashboard() {
       const { data: { user } } = await supabase.auth.getUser()
 
       if (!convId) {
-        await getOrCreateDocument(tuteurDocText, data.titre || messageText.slice(0, 60))
+        await getOrCreateDocument(tuteurDocText, data.titre || messageText.slice(0, 60), tuteurDocImages)
         const { data: conv, error: convError } = await supabase.from('tuteur_conversations').insert({
           user_id: user.id,
           titre: data.titre || messageText.slice(0, 60),
@@ -624,7 +634,7 @@ export default function Dashboard() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      await getOrCreateDocument(ficheDocText, data.titre || 'Fiche sans titre')
+      await getOrCreateDocument(ficheDocText, data.titre || 'Fiche sans titre', ficheDocImages)
       const { error } = await supabase.from('fiches').insert({
         user_id: user.id,
         titre: data.titre || 'Fiche sans titre',
@@ -782,19 +792,20 @@ export default function Dashboard() {
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('')
   }
 
-  async function getOrCreateDocument(text, titre) {
+  async function getOrCreateDocument(text, titre, images) {
     const { data: { user } } = await supabase.auth.getUser()
-    const hash = await hashText(text)
+    const hashSource = text && text.trim() ? text : JSON.stringify(images || [])
+    const hash = await hashText(hashSource)
     const { data: existing } = await supabase.from('documents').select('id, titre').eq('user_id', user.id).eq('contenu_hash', hash).maybeSingle()
     if (existing) return existing.id
     const { data: created, error } = await supabase.from('documents').insert({
-      user_id: user.id, titre, contenu_texte: text, contenu_hash: hash,
+      user_id: user.id, titre, contenu_texte: text || '', contenu_hash: hash,
+      images: images && images.length > 0 ? images : null,
     }).select().single()
     if (error) { console.error('Erreur enregistrement document:', error); return null }
     loadMesCours()
     return created.id
   }
-
     async function handleFileUpload(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -863,7 +874,7 @@ export default function Dashboard() {
       const finalScore = finalAnswers.filter((a, i) => a === questions[i]?.correctIndex).length
       const titre = aiTitre || (docText.trim().slice(0, 60) + (docText.trim().length > 60 ? '...' : ''))
 
-      const documentId = await getOrCreateDocument(docText, titre)
+      const documentId = await getOrCreateDocument(docText, titre, docImages)
       if (!documentId) return
 
       const { data: session, error: sessionError } = await supabase.from('quiz_sessions').insert({
@@ -890,7 +901,7 @@ export default function Dashboard() {
     setView('quiz')
     setStage('loading')
     setSidebarOpen(false)
-    const { data: session } = await supabase.from('quiz_sessions').select('*, documents(contenu_texte)').eq('id', id).single()
+    const { data: session } = await supabase.from('quiz_sessions').select('*, documents(contenu_texte, images)').eq('id', id).single()
     const { data: qs } = await supabase.from('quiz_questions').select('*').eq('session_id', id).order('ordre')
     setSummary(session?.resume_revision || [])
     setQuestions((qs || []).map((q) => ({
@@ -1583,8 +1594,10 @@ export default function Dashboard() {
                 <div style={{ display: 'flex', gap: 12, marginTop: 18 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, color: T.sub, marginBottom: 6, fontWeight: 600 }}>Questions</div>
-                    <input type="number" min={3} max={10} value={numQuestions} onChange={(e) => setNumQuestions(Number(e.target.value))} style={inputStyle} />
-                  </div>
+                  <select value={numQuestions} onChange={(e) => setNumQuestions(Number(e.target.value))} style={inputStyle}>
+                    {[3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, color: T.sub, marginBottom: 6, fontWeight: 600 }}>Secondes / question</div>
                     <input type="number" min={10} max={90} step={5} value={secondsPerQ} onChange={(e) => setSecondsPerQ(Number(e.target.value))} style={inputStyle} />
