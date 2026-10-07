@@ -170,14 +170,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { navigate('/login'); return }
-      const { data, error } = await supabase.from('profiles').select('nom, domaine_etudes, niveau').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { navigate('/login'); return }
+      const { data, error } = await supabase.from('profiles').select('nom, domaine_etudes, niveau').eq('id', session.user.id).single()
       if (error || !data) { navigate('/complete-profile'); return }
       setNom(data.nom)
       setDomaine(data.domaine_etudes)
       setNiveau(data.niveau)
     })()
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') navigate('/login')
+    })
+    return () => listener.subscription.unsubscribe()
   }, [])
 
   useEffect(() => { loadHistory(); loadFicheHistory(); loadComprendreHistory(); loadTuteurHistory(); loadMesCours(); loadUsage() }, [])
