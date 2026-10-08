@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTheme } from './ThemeContext'
 import ThemeToggle from './ThemeToggle'
 import Logo from './Logo'
+import useRedirectIfLoggedIn from './useRedirectIfLoggedIn'
 
 const FAQS = [
   { q: "Comment ça marche exactement ?", a: "Tu déposes le texte de ton cours (ou tu importes un PDF/Word/photo), l'IA te génère un résumé des points clés puis un quiz chronométré pour tester ce que tu as retenu. À la fin, tu vois exactement ce qu'il te reste à réviser." },
@@ -31,7 +32,8 @@ function FaqItem({ q, a, T }) {
 
 export default function Home({ onGetStarted }) {
   const { T } = useTheme()
-
+  const checking = useRedirectIfLoggedIn()
+  if (checking) return <div style={{ minHeight: '100vh', background: T.bg }} />
   return (
     <div style={{ minHeight: '100vh', background: T.bg, fontFamily: 'Inter, sans-serif', color: T.text }}>
       {/* Barre de navigation */}

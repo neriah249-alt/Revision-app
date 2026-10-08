@@ -5,6 +5,7 @@ import { useTheme } from './ThemeContext'
 import ThemeToggle from './ThemeToggle'
 import Logo from './Logo'
 import { useNavigate, Link } from 'react-router-dom'
+import useRedirectIfLoggedIn from './useRedirectIfLoggedIn'
 
 
 export default function SignUp() {
@@ -17,6 +18,8 @@ export default function SignUp() {
   const [niveau, setNiveau] = useState('')
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const checking = useRedirectIfLoggedIn()
+  if (checking) return <div style={{ minHeight: '100vh', background: T.bg }} />
 
   async function handleSignUp(e) {
     e.preventDefault()

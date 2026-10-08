@@ -5,6 +5,7 @@ import { getStyles } from './theme'
 import { useTheme } from './ThemeContext'
 import ThemeToggle from './ThemeToggle'
 import Logo from './Logo'
+import useRedirectIfLoggedIn from './useRedirectIfLoggedIn'
 
 export default function Login() {
   const { T, mode, toggleTheme } = useTheme()
@@ -13,6 +14,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const checking = useRedirectIfLoggedIn()
+  if (checking) return <div style={{ minHeight: '100vh', background: T.bg }} />
 
   async function handleLogin(e) {
     e.preventDefault()
