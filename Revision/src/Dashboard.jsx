@@ -209,17 +209,11 @@ export default function Dashboard() {
 
   async function checkAndUseQuota(type) {
     if (usage.estPremium) return { allowed: true }
-    const field = type === 'quiz_fiche' ? 'quizFiche' : 'comprendreTuteur'
+    const used = type === 'quiz_fiche' ? usage.quizFiche : usage.comprendreTuteur
     const limit = type === 'quiz_fiche' ? LIMIT_QUIZ_FICHE : LIMIT_COMPRENDRE_TUTEUR
-    if (usage[field] >= limit) return { allowed: false }
-    const { data: { user } } = await supabase.auth.getUser()
-    const dbField = type === 'quiz_fiche' ? 'usage_quiz_fiche' : 'usage_comprendre_tuteur'
-    const newValue = usage[field] + 1
-    await supabase.from('profiles').update({ [dbField]: newValue }).eq('id', user.id)
-    setUsage((prev) => ({ ...prev, [field]: newValue }))
-    return { allowed: true }
+    return { allowed: used < limit }
   }
-
+  
   async function loadMesCours() {
     setLoadingMesCours(true)
     const { data: { user } } = await supabase.auth.getUser()
@@ -492,6 +486,8 @@ export default function Dashboard() {
       setTuteurError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de commencer.')
       return
     }
+    const quota = await checkAndUseQuota('comprendre_tuteur')
+    if (!quota.allowed) { setTuteurError('QUOTA_DEPASSE'); return }
     setTuteurStage('chat')
   }
 
@@ -1362,7 +1358,12 @@ export default function Dashboard() {
                 )}
                 <textarea value={tuteurDocText} onChange={(e) => setTuteurDocText(e.target.value)} placeholder="Colle ici le texte de ton cours, ou importe un fichier ci-dessus..." rows={8} style={{ ...inputStyle, resize: 'vertical' }} />
                 <button onClick={startTuteurConversation} style={{ ...buttonStyle, width: '100%', marginTop: 20 }}>Commencer la discussion</button>
-                {tuteurError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{tuteurError}</p>}
+                {tuteurError === 'QUOTA_DEPASSE' ? (
+                  <div style={{ background: T.accentSoft, borderRadius: 12, padding: '12px 14px', marginTop: 10 }}>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{quotaMessage('comprendre_tuteur')}</div>
+                    <button onClick={showPremiumTeaser} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Passer en Premium</button>
+                  </div>
+                ) : tuteurError && <p style={{ color: '#E0483C', fontSize: 13, marginTop: 10 }}>{tuteurError}</p>}
               </div>
             )}
 
