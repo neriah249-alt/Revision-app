@@ -195,15 +195,16 @@ export default function Dashboard() {
   async function loadUsage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data } = await supabase.from('profiles').select('usage_quiz_fiche, usage_comprendre_tuteur, usage_month, est_premium').eq('id', user.id).single()
+    const { data } = await supabase.from('profiles').select('usage_quiz_fiche, usage_comprendre_tuteur, usage_month, est_premium, premium_until').eq('id', user.id).single()
     if (!data) return
-    const thisMonth = currentMonthKey()
-    if (data.usage_month !== thisMonth) {
-      await supabase.from('profiles').update({ usage_quiz_fiche: 0, usage_comprendre_tuteur: 0, usage_month: thisMonth }).eq('id', user.id)
-      setUsage({ quizFiche: 0, comprendreTuteur: 0, estPremium: data.est_premium })
-    } else {
-      setUsage({ quizFiche: data.usage_quiz_fiche, comprendreTuteur: data.usage_comprendre_tuteur, estPremium: data.est_premium })
-    }
+    const thisMonth = new Date().toISOString().slice(0, 7)
+    const sameMonth = data.usage_month === thisMonth
+    const premium = !!data.est_premium || (data.premium_until && new Date(data.premium_until) > new Date())
+    setUsage({
+      quizFiche: sameMonth ? data.usage_quiz_fiche : 0,
+      comprendreTuteur: sameMonth ? data.usage_comprendre_tuteur : 0,
+      estPremium: !!premium,
+    })
   }
 
   async function checkAndUseQuota(type) {
@@ -410,6 +411,7 @@ export default function Dashboard() {
       setComprendreData(data)
       setComprendreStage('result')
       saveComprendre(data)
+      loadUsage()
     } catch (e) {
       setComprendreError('Une erreur est survenue. Réessaie.')
       setComprendreStage('input')
@@ -532,6 +534,7 @@ export default function Dashboard() {
       }
       const updatedHistory = [...newHistory, { role: 'assistant', contenu: data.reponse }]
       setTuteurMessages(updatedHistory)
+      if (isFirstMessage) loadUsage()
 
       let convId = tuteurConversationId
       const { data: { user } } = await supabase.auth.getUser()
@@ -629,6 +632,7 @@ export default function Dashboard() {
       setFicheData(data)
       setFicheStage('result')
       saveFiche(data)
+      loadUsage()
     } catch (e) {
       setFicheError('Une erreur est survenue. Réessaie.')
       setFicheStage('input')
@@ -729,6 +733,7 @@ export default function Dashboard() {
       setAnswers(new Array((data.questions || []).length).fill(null))
       setCurrent(0)
       setStage('revision')
+      loadUsage()
     } catch (e) {
       setGenError('Une erreur est survenue. Réessaie.')
       setStage('input')
