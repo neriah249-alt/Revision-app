@@ -11,7 +11,8 @@ import mammoth from 'mammoth'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
 
-const SIDEBAR_W = 240
+// À passer à true seulement quand la confirmation des paiements côté serveur sera en place et testée
+const PREMIUM_CHECKOUT_ENABLED = false
 
 const MOTIVATIONAL_QUOTES = [
   "Un grand rêve commence toujours par une petite action. 💙",
@@ -100,6 +101,9 @@ export default function Dashboard() {
   const [view, setView] = useState('accueil')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [premiumMsg, setPremiumMsg] = useState(false)
+  const [showPremiumModal, setShowPremiumModal] = useState(false)
+  const [premiumLoading, setPremiumLoading] = useState(false)
+  const [premiumError, setPremiumError] = useState('')
 
   const [nom, setNom] = useState('')
   const [domaine, setDomaine] = useState('')
@@ -604,7 +608,33 @@ export default function Dashboard() {
     setLoadingProg(false)
   }
 
-    async function generateFiche() {
+        {showPremiumModal && (
+        <div onClick={() => setShowPremiumModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 20, padding: 26, maxWidth: 400, width: '100%', border: `1px solid ${T.border}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ fontFamily: 'Fraunces, serif', fontSize: 22, fontWeight: 600 }}>Passe en Premium ✨</div>
+              <button onClick={() => setShowPremiumModal(false)} style={{ background: 'none', border: 'none', color: T.sub, fontSize: 18, cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ margin: '14px 0 4px', fontFamily: 'Fraunces, serif', fontSize: 30, fontWeight: 600, color: T.accent }}>
+              1 000 XOF <span style={{ fontSize: 14, color: T.sub, fontFamily: 'Inter, sans-serif', fontWeight: 500 }}>/ mois</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.sub, marginBottom: 16 }}>Accès de 30 jours, sans renouvellement automatique.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13.5, marginBottom: 18 }}>
+              <div>✅ Quiz et fiches de révision <strong>illimités</strong></div>
+              <div>✅ Questions « Comprendre » et conversations avec le tuteur <strong>illimitées</strong></div>
+              <div>✅ Plus de limite mensuelle, tu révises quand tu veux</div>
+            </div>
+            <div style={{ fontSize: 12, color: T.sub, marginBottom: 14 }}>Paiement par MTN Mobile Money, Moov Money, Celtiis Cash ou carte bancaire.</div>
+            <button onClick={startPremiumCheckout} disabled={premiumLoading} style={{ ...buttonStyle, width: '100%', marginTop: 0, opacity: premiumLoading ? 0.6 : 1 }}>
+              {premiumLoading ? 'Redirection...' : 'Payer 1 000 XOF'}
+            </button>
+            {premiumError && <p style={{ color: T.sub, fontSize: 13, marginTop: 12, textAlign: 'center' }}>{premiumError}</p>}
+          </div>
+        </div>
+      )}
+
+
+  async function generateFiche() {
     setFicheError('')
     if ((!ficheDocText.trim() || ficheDocText.trim().length < 20) && ficheDocImages.length === 0) {
       setFicheError('Colle un texte de cours un peu plus long, ou importe un fichier, avant de générer.')
@@ -677,9 +707,39 @@ export default function Dashboard() {
     setSidebarOpen(false)
   }
 
-  function showPremiumTeaser() {
-    setPremiumMsg(true)
-    setTimeout(() => setPremiumMsg(false), 2500)
+    function showPremiumTeaser() {
+    setPremiumError('')
+    setShowPremiumModal(true)
+  }
+
+  async function startPremiumCheckout() {
+    setPremiumError('')
+    if (!PREMIUM_CHECKOUT_ENABLED) {
+      setPremiumError('Le paiement sera disponible très bientôt. Merci de ta patience !')
+      return
+    }
+    setPremiumLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-premium-checkout`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({}),
+        }
+      )
+      const data = await response.json()
+      if (data.error || !data.checkout_url) {
+        setPremiumError(data.error || "Impossible de démarrer le paiement.")
+        setPremiumLoading(false)
+        return
+      }
+      window.location.href = data.checkout_url
+    } catch (e) {
+      setPremiumError('Une erreur est survenue. Réessaie.')
+      setPremiumLoading(false)
+    }
   }
 
   function quotaMessage(type) {
@@ -1702,6 +1762,31 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+            {showPremiumModal && (
+        <div onClick={() => setShowPremiumModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: T.card, borderRadius: 20, padding: 26, maxWidth: 400, width: '100%', border: `1px solid ${T.border}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ fontFamily: 'Fraunces, serif', fontSize: 22, fontWeight: 600 }}>Passe en Premium ✨</div>
+              <button onClick={() => setShowPremiumModal(false)} style={{ background: 'none', border: 'none', color: T.sub, fontSize: 18, cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ margin: '14px 0 4px', fontFamily: 'Fraunces, serif', fontSize: 30, fontWeight: 600, color: T.accent }}>
+              1 000 XOF <span style={{ fontSize: 14, color: T.sub, fontFamily: 'Inter, sans-serif', fontWeight: 500 }}>/ mois</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.sub, marginBottom: 16 }}>Accès de 30 jours, sans renouvellement automatique.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13.5, marginBottom: 18 }}>
+              <div>✅ Quiz et fiches de révision <strong>illimités</strong></div>
+              <div>✅ Questions « Comprendre » et conversations avec le tuteur <strong>illimitées</strong></div>
+              <div>✅ Plus de limite mensuelle, tu révises quand tu veux</div>
+            </div>
+            <div style={{ fontSize: 12, color: T.sub, marginBottom: 14 }}>Paiement par MTN Mobile Money, Moov Money, Celtiis Cash ou carte bancaire.</div>
+            <button onClick={startPremiumCheckout} disabled={premiumLoading} style={{ ...buttonStyle, width: '100%', marginTop: 0, opacity: premiumLoading ? 0.6 : 1 }}>
+              {premiumLoading ? 'Redirection...' : 'Payer 1 000 XOF'}
+            </button>
+            {premiumError && <p style={{ color: T.sub, fontSize: 13, marginTop: 12, textAlign: 'center' }}>{premiumError}</p>}
+          </div>
+        </div>
+      )}
 
       {showLogoutConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
