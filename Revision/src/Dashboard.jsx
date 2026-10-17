@@ -10,7 +10,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import mammoth from 'mammoth'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
-
+const SIDEBAR_W = 240
 // À passer à true seulement quand la confirmation des paiements côté serveur sera en place et testée
 const PREMIUM_CHECKOUT_ENABLED = false
 

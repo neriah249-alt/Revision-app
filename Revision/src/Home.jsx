@@ -155,6 +155,9 @@ export default function Home({ onGetStarted }) {
           </Link>
         </div>
       </div>
+      <div style={{ textAlign: 'center', padding: '0 20px 40px', fontSize: 12.5, color: T.sub }}>
+        <Link to="/confidentialite" style={{ color: T.sub }}>Confidentialité</Link> · <Link to="/cgu" style={{ color: T.sub }}>Conditions d'utilisation</Link>
+      </div>
     </div>
   )
 }

@@ -67,6 +67,9 @@ export default function SignUp() {
             <option value="Autre">Autre</option>
           </select>
           <button type="submit" style={buttonStyle}>S'inscrire</button>
+          <p style={{ fontSize: 11.5, color: T.sub, margin: 0, textAlign: 'center', lineHeight: 1.5 }}>
+            En créant un compte, tu acceptes les <Link to="/cgu" style={{ color: T.accent }}>conditions d'utilisation</Link> et la <Link to="/confidentialite" style={{ color: T.accent }}>politique de confidentialité</Link>.
+          </p>
           {error && <p style={{ color: '#E0483C', fontSize: 13, margin: 0 }}>{error}</p>}
         </form>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0' }}>

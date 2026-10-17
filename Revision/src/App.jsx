@@ -9,6 +9,7 @@ import ForgotPassword from './ForgotPassword'
 import ResetPassword from './ResetPassword'
 import Dashboard from './Dashboard'
 import CompleteProfile from './CompleteProfile'
+import { Confidentialite, CGU } from './Legal'
 
 function HomeWrapper() {
   return <Home />
@@ -28,6 +29,8 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/complete-profile" element={<CompleteProfile />} />
+        <Route path="/confidentialite" element={<Confidentialite />} />
+        <Route path="/cgu" element={<CGU />} />
       </Routes>
     </BrowserRouter>
     </ThemeProvider>
