@@ -68,6 +68,28 @@ function ProgressRing({ pct, T, size = 120 }) {
   )
 }
 
+function isReadableText(t) {
+  if (!t || t.length < 15) return false
+  const letters = (t.match(/[A-Za-zÀ-ÿ]/g) || []).length
+  const nonSpace = t.replace(/\s/g, '').length || 1
+  return letters / nonSpace >= 0.5
+}
+
+function extractionErrorMessage(err) {
+  if (err && err.message === 'FORMAT_NON_SUPPORTE') return 'Formats acceptés : PDF, Word (.docx) ou image.'
+  if (err && (err.message === 'PDF_PROTEGE' || err.name === 'PasswordException')) return "Ce PDF est protégé par un mot de passe. Retire la protection puis réessaie."
+  return "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement."
+}
+
+async function renderPageToJpeg(page, scale, quality) {
+  const viewport = page.getViewport({ scale })
+  const canvas = document.createElement('canvas')
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+  return canvas.toDataURL('image/jpeg', quality).split(',')[1]
+}
+
 function formatAIText(text) {
   if (!text) return null
   const segments = text.split(/```/g)
@@ -245,19 +267,16 @@ export default function Dashboard() {
   }
 
   function useCourseFor(doc, destination) {
-    const hasImages = doc.images && doc.images.length > 0
+    const imgs = doc.images && doc.images.length > 0 ? doc.images : []
+    const txt = doc.contenu_texte || ''
     if (destination === 'quiz') {
-      setView('quiz'); startNewCourse(); setFileName(doc.titre)
-      if (hasImages) setDocImages(doc.images); else setDocText(doc.contenu_texte)
+      setView('quiz'); startNewCourse(); setFileName(doc.titre); setDocText(txt); setDocImages(imgs)
     } else if (destination === 'fiches') {
-      setView('fiches'); setFicheStage('input'); setFicheFileName(doc.titre); setFicheData(null); setFicheError('')
-      if (hasImages) setFicheDocImages(doc.images); else setFicheDocText(doc.contenu_texte)
+      setView('fiches'); setFicheStage('input'); setFicheFileName(doc.titre); setFicheData(null); setFicheError(''); setFicheDocText(txt); setFicheDocImages(imgs)
     } else if (destination === 'comprendre') {
-      setView('comprendre'); setComprendreStage('input'); setComprendreFileName(doc.titre); setComprendreData(null); setComprendreError('')
-      if (hasImages) setComprendreDocImages(doc.images); else setComprendreDocText(doc.contenu_texte)
+      setView('comprendre'); setComprendreStage('input'); setComprendreFileName(doc.titre); setComprendreData(null); setComprendreError(''); setComprendreDocText(txt); setComprendreDocImages(imgs)
     } else if (destination === 'tuteur') {
-      setView('tuteur'); setTuteurStage('input'); setTuteurFileName(doc.titre); setTuteurMessages([]); setTuteurConversationId(null)
-      if (hasImages) setTuteurDocImages(doc.images); else setTuteurDocText(doc.contenu_texte)
+      setView('tuteur'); setTuteurStage('input'); setTuteurFileName(doc.titre); setTuteurMessages([]); setTuteurConversationId(null); setTuteurDocText(txt); setTuteurDocImages(imgs)
     }
   }
 
@@ -370,15 +389,11 @@ export default function Dashboard() {
     setComprendreExtracting(true)
     try {
       const result = await extractFromFile(file)
-      if (result.mode === 'text') {
-        setComprendreDocText(result.text)
-        setComprendreDocImages([])
-      } else {
-        setComprendreDocImages(result.images)
-        setComprendreDocText('')
-      }
+      setComprendreDocText(result.text || '')
+      setComprendreDocImages(result.images || [])
+      if (result.notice) setComprendreFileName(`${file.name} (${result.notice})`)
     } catch (err) {
-      setComprendreError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
+      setComprendreError(extractionErrorMessage(err))
     }
     setComprendreExtracting(false)
   }
@@ -471,15 +486,11 @@ export default function Dashboard() {
     setTuteurExtracting(true)
     try {
       const result = await extractFromFile(file)
-      if (result.mode === 'text') {
-        setTuteurDocText(result.text)
-        setTuteurDocImages([])
-      } else {
-        setTuteurDocImages(result.images)
-        setTuteurDocText('')
-      }
+      setTuteurDocText(result.text || '')
+      setTuteurDocImages(result.images || [])
+      if (result.notice) setTuteurFileName(`${file.name} (${result.notice})`)
     } catch (err) {
-      setTuteurError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
+      setTuteurError(extractionErrorMessage(err))
     }
     setTuteurExtracting(false)
   }
@@ -624,7 +635,7 @@ export default function Dashboard() {
               <div>✅ Questions « Comprendre » et conversations avec le tuteur <strong>illimitées</strong></div>
               <div>✅ Plus de limite mensuelle, tu révises quand tu veux</div>
             </div>
-            <div style={{ fontSize: 12, color: T.sub, marginBottom: 14 }}>Paiement par MTN Mobile Money, Moov Money, Celtiis Cash ou carte bancaire.</div>
+            <div style={{ fontSize: 12, color: T.sub, marginBottom: 14 }}>Paiement par MTN Mobile Money, Moov Money OU Celtiis Cash .</div>
             <button onClick={startPremiumCheckout} disabled={premiumLoading} style={{ ...buttonStyle, width: '100%', marginTop: 0, opacity: premiumLoading ? 0.6 : 1 }}>
               {premiumLoading ? 'Redirection...' : 'Payer 1 000 XOF'}
             </button>
@@ -815,39 +826,55 @@ export default function Dashboard() {
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
-      return { mode: 'images', images: [dataUrl.split(',')[1]] }
+      return { text: '', images: [dataUrl.split(',')[1]], notice: '' }
     }
+
     if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       const arrayBuffer = await file.arrayBuffer()
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+      let pdf
+      try {
+        pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+      } catch (err) {
+        if (err && err.name === 'PasswordException') throw new Error('PDF_PROTEGE')
+        throw err
+      }
+      const MAX_IMAGES = 10
+      const MAX_CHARS = 80000
       let text = ''
+      let textCut = false
+      let skippedScans = 0
+      const images = []
+
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i)
         const content = await page.getTextContent()
-        text += content.items.map((item) => item.str).join(' ') + '\n'
+        const pageText = content.items.map((item) => item.str).join(' ').trim()
+        if (isReadableText(pageText)) {
+          if (text.length < MAX_CHARS) text += pageText + '\n'
+          else textCut = true
+        } else if (images.length < MAX_IMAGES) {
+          images.push(await renderPageToJpeg(page, 1.4, 0.7))
+        } else {
+          skippedScans++
+        }
       }
-      if (text.trim().length >= 30) {
-        return { mode: 'text', text: text.trim() }
+
+      const notices = []
+      if (skippedScans > 0) notices.push(`${MAX_IMAGES} pages scannées lues sur ${MAX_IMAGES + skippedScans}`)
+      if (textCut) notices.push('cours très long : le début a été utilisé')
+
+      const hasRealText = text.trim().length >= 30
+      return {
+        text: hasRealText ? text.trim() : '',
+        images,
+        notice: notices.join(', '),
       }
-      // PDF scanné/image : on transforme les pages en images pour que l'IA les lise directement
-      const maxPages = Math.min(pdf.numPages, 8)
-      const images = []
-      for (let i = 1; i <= maxPages; i++) {
-        const page = await pdf.getPage(i)
-        const viewport = page.getViewport({ scale: 1.5 })
-        const canvas = document.createElement('canvas')
-        canvas.width = viewport.width
-        canvas.height = viewport.height
-        const ctx = canvas.getContext('2d')
-        await page.render({ canvasContext: ctx, viewport }).promise
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.75)
-        images.push(dataUrl.split(',')[1])
-      }
-      return { mode: 'images', images }
-    } else if (file.name.endsWith('.docx')) {
+    }
+
+    if (file.name.endsWith('.docx')) {
       const arrayBuffer = await file.arrayBuffer()
       const result = await mammoth.extractRawText({ arrayBuffer })
-      return { mode: 'text', text: result.value }
+      return { text: result.value, images: [], notice: '' }
     }
     throw new Error('FORMAT_NON_SUPPORTE')
   }
@@ -872,6 +899,7 @@ export default function Dashboard() {
     loadMesCours()
     return created.id
   }
+    
     async function handleFileUpload(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -880,15 +908,11 @@ export default function Dashboard() {
     setExtracting(true)
     try {
       const result = await extractFromFile(file)
-      if (result.mode === 'text') {
-        setDocText(result.text)
-        setDocImages([])
-      } else {
-        setDocImages(result.images)
-        setDocText('')
-      }
+      setDocText(result.text || '')
+      setDocImages(result.images || [])
+      if (result.notice) setFileName(`${file.name} (${result.notice})`)
     } catch (err) {
-      setGenError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
+      setGenError(extractionErrorMessage(err))
     }
     setExtracting(false)
   }
@@ -901,15 +925,11 @@ export default function Dashboard() {
     setFicheExtracting(true)
     try {
       const result = await extractFromFile(file)
-      if (result.mode === 'text') {
-        setFicheDocText(result.text)
-        setFicheDocImages([])
-      } else {
-        setFicheDocImages(result.images)
-        setFicheDocText('')
-      }
+      setFicheDocText(result.text || '')
+      setFicheDocImages(result.images || [])
+      if (result.notice) setFicheFileName(`${file.name} (${result.notice})`)
     } catch (err) {
-      setFicheError(err.message === 'FORMAT_NON_SUPPORTE' ? 'Formats acceptés : PDF ou Word (.docx) uniquement.' : "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement.")
+      setFicheError(extractionErrorMessage(err))
     }
     setFicheExtracting(false)
   }

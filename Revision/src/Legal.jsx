@@ -82,7 +82,7 @@ export function CGU() {
         { titre: 'L\'intelligence artificielle peut se tromper', paragraphes: ['Les quiz, fiches et réponses sont générés automatiquement et peuvent contenir des erreurs. Vérifie toujours avec ton cours et tes enseignants. Le service ne remplace pas ton travail et ne garantit aucun résultat aux examens.'] },
         { titre: 'Offre gratuite et Premium', paragraphes: [
           'L\'offre gratuite inclut 12 quiz/fiches et 15 questions « Comprendre » ou conversations de tutorat par mois, remis à zéro chaque mois.',
-          'Lorsque l\'offre Premium est disponible : 1 000 XOF pour 30 jours d\'accès illimité, sans renouvellement automatique. Le paiement est traité par SasPay (Mobile Money ou carte) et l\'accès s\'active après confirmation du paiement.',
+          'Lorsque l\'offre Premium est disponible : 1 000 XOF pour 30 jours d\'accès illimité, sans renouvellement automatique. Le paiement est traité par SasPay (Mobile Money) et l\'accès s\'active après confirmation du paiement.',
           `Les paiements ne sont en principe pas remboursables, sauf erreur de notre part (par exemple un paiement débité sans activation de l'accès) : écris-nous à ${CONTACT_EMAIL}.`,
           'Les limites et les prix peuvent évoluer, avec une information préalable raisonnable.',
         ] },
