@@ -78,6 +78,8 @@ function isReadableText(t) {
 function extractionErrorMessage(err) {
   if (err && err.message === 'FORMAT_NON_SUPPORTE') return 'Formats acceptés : PDF, Word (.docx) ou image.'
   if (err && (err.message === 'PDF_PROTEGE' || err.name === 'PasswordException')) return "Ce PDF est protégé par un mot de passe. Retire la protection puis réessaie."
+  if (err && err.message === 'FICHIER_TROP_GROS') return "Ce fichier est trop volumineux (60 Mo maximum). Compresse-le ou découpe-le en plusieurs parties."
+  if (err && (err.name === 'RangeError' || /memory|allocation/i.test(String(err.message)))) return "Mémoire insuffisante sur cet appareil. Essaie avec un fichier plus petit, ou découpe-le en plusieurs parties."
   return "Échec de la lecture du fichier. Réessaie ou colle le texte manuellement."
 }
 
@@ -87,7 +89,10 @@ async function renderPageToJpeg(page, scale, quality) {
   canvas.width = viewport.width
   canvas.height = viewport.height
   await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-  return canvas.toDataURL('image/jpeg', quality).split(',')[1]
+  const data = canvas.toDataURL('image/jpeg', quality).split(',')[1]
+  canvas.width = 0
+  canvas.height = 0
+  return data
 }
 
 function formatAIText(text) {
@@ -807,18 +812,23 @@ export default function Dashboard() {
     }
   }
 
-  async function extractFromFile(file) {
+    async function extractFromFile(file) {
     if (file.type.startsWith('image/')) {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => {
           const img = new Image()
           img.onload = () => {
+            const MAX_SIDE = 1600
+            const ratio = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
             const canvas = document.createElement('canvas')
-            canvas.width = img.width
-            canvas.height = img.height
-            canvas.getContext('2d').drawImage(img, 0, 0)
-            resolve(canvas.toDataURL('image/jpeg', 0.8))
+            canvas.width = Math.round(img.width * ratio)
+            canvas.height = Math.round(img.height * ratio)
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+            const out = canvas.toDataURL('image/jpeg', 0.8)
+            canvas.width = 0
+            canvas.height = 0
+            resolve(out)
           }
           img.onerror = reject
           img.src = reader.result
@@ -830,6 +840,9 @@ export default function Dashboard() {
     }
 
     if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      const MAX_FILE_MB = 60
+      if (file.size > MAX_FILE_MB * 1024 * 1024) throw new Error('FICHIER_TROP_GROS')
+
       const arrayBuffer = await file.arrayBuffer()
       let pdf
       try {
@@ -838,36 +851,49 @@ export default function Dashboard() {
         if (err && err.name === 'PasswordException') throw new Error('PDF_PROTEGE')
         throw err
       }
-      const MAX_IMAGES = 10
-      const MAX_CHARS = 80000
-      let text = ''
-      let textCut = false
-      let skippedScans = 0
-      const images = []
 
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i)
-        const content = await page.getTextContent()
-        const pageText = content.items.map((item) => item.str).join(' ').trim()
-        if (isReadableText(pageText)) {
-          if (text.length < MAX_CHARS) text += pageText + '\n'
-          else textCut = true
-        } else if (images.length < MAX_IMAGES) {
-          images.push(await renderPageToJpeg(page, 1.4, 0.7))
-        } else {
-          skippedScans++
+      try {
+        const MAX_IMAGES = 10
+        const MAX_CHARS = 80000
+        const MAX_PAGES = 400
+        const totalPages = pdf.numPages
+        const lastPage = Math.min(totalPages, MAX_PAGES)
+        let text = ''
+        let textCut = false
+        let skippedScans = 0
+        const images = []
+
+        for (let i = 1; i <= lastPage; i++) {
+          const page = await pdf.getPage(i)
+          try {
+            const content = await page.getTextContent()
+            const pageText = content.items.map((item) => item.str).join(' ').trim()
+            if (isReadableText(pageText)) {
+              text += pageText + '\n'
+            } else if (images.length < MAX_IMAGES) {
+              images.push(await renderPageToJpeg(page, 1.3, 0.65))
+            } else {
+              skippedScans++
+            }
+          } finally {
+            page.cleanup()
+          }
+          if (text.length >= MAX_CHARS) { textCut = true; break }
         }
-      }
 
-      const notices = []
-      if (skippedScans > 0) notices.push(`${MAX_IMAGES} pages scannées lues sur ${MAX_IMAGES + skippedScans}`)
-      if (textCut) notices.push('cours très long : le début a été utilisé')
+        const notices = []
+        if (totalPages > lastPage) notices.push(`${lastPage} premières pages lues sur ${totalPages}`)
+        if (skippedScans > 0) notices.push(`${MAX_IMAGES} pages scannées lues, les suivantes ignorées`)
+        if (textCut) notices.push('cours très long : début utilisé')
 
-      const hasRealText = text.trim().length >= 30
-      return {
-        text: hasRealText ? text.trim() : '',
-        images,
-        notice: notices.join(', '),
+        const hasRealText = text.trim().length >= 30
+        return {
+          text: hasRealText ? text.trim().slice(0, MAX_CHARS) : '',
+          images,
+          notice: notices.join(', '),
+        }
+      } finally {
+        await pdf.destroy()
       }
     }
 
